@@ -1,0 +1,150 @@
+{
+  "years": [
+    {
+      "id": "year_2",
+      "name": "2nd Year MBBS",
+      "subjects": [
+        {
+          "id": "pathology",
+          "name": "PATHOLOGY",
+          "papers": [
+            {
+              "id": "paper_1",
+              "name": "Paper 1",
+              "chapters": [
+                {
+                  "id": "hemodynamic_disorders",
+                  "name": "Hemodynamic Disorders",
+                  "questions": [
+                    {
+                      "id": "path_q1",
+                      "title": "Shock",
+                      "type": "long",
+                      "tags": ["Imp", "Path"],
+                      "importance": "high",
+                      "description": "Define Shock. Classify shock. Discuss the pathogenesis and morphological features of Septic Shock."
+                    },
+                    {
+                      "id": "path_q2",
+                      "title": "Thrombosis",
+                      "type": "short",
+                      "tags": ["Path"],
+                      "importance": "normal",
+                      "description": "Enumerate the components of Virchow's Triad. Discuss the morphology of an arterial thrombus."
+                    },
+                    {
+                      "id": "path_q3",
+                      "title": "Edema",
+                      "type": "short",
+                      "tags": ["Path"],
+                      "importance": "normal",
+                      "description": "Describe the pathogenesis of Cardiac Edema."
+                    }
+                  ]
+                },
+                {
+                  "id": "neoplasia",
+                  "name": "Neoplasia",
+                  "questions": [
+                    {
+                      "id": "path_q4",
+                      "title": "Benign vs Malignant",
+                      "type": "long",
+                      "tags": ["Imp", "Path", "Dec 21"],
+                      "importance": "high",
+                      "description": "Enumerate the differences between benign and malignant tumors with suitable examples."
+                    },
+                    {
+                      "id": "path_q5",
+                      "title": "Chemical Carcinogenesis",
+                      "type": "short",
+                      "tags": ["Path"],
+                      "importance": "normal",
+                      "description": "Write a short note on the mechanism of Chemical Carcinogenesis."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "pharmacology",
+          "name": "PHARMACOLOGY",
+          "papers": [
+            {
+              "id": "paper_1",
+              "name": "Paper 1",
+              "chapters": [
+                {
+                  "id": "general_pharmacology",
+                  "name": "General Pharmacology",
+                  "questions": [
+                    {
+                      "id": "pharm_q1",
+                      "title": "Pharmacokinetics",
+                      "type": "long",
+                      "tags": ["Pharm", "Imp"],
+                      "importance": "high",
+                      "description": "Define Bioavailability. Discuss the factors altering the bioavailability of a drug."
+                    },
+                    {
+                      "id": "pharm_q2",
+                      "title": "First Pass Metabolism",
+                      "type": "short",
+                      "tags": ["Pharm"],
+                      "importance": "normal",
+                      "description": "Explain First Pass Metabolism with examples."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "microbiology",
+          "name": "MICROBIOLOGY",
+          "papers": [
+            {
+              "id": "paper_1",
+              "name": "Paper 1",
+              "chapters": [
+                {
+                  "id": "bacteriology",
+                  "name": "Bacteriology",
+                  "questions": [
+                    {
+                      "id": "micro_q1",
+                      "title": "Mycobacterium Tuberculosis",
+                      "type": "long",
+                      "tags": ["Micro", "Imp"],
+                      "importance": "high",
+                      "description": "Describe the morphology, cultural characteristics, and pathogenesis of Mycobacterium Tuberculosis. Add a note on the laboratory diagnosis of Pulmonary Tuberculosis."
+                    },
+                    {
+                      "id": "micro_q2",
+                      "title": "Bacterial Spores",
+                      "type": "short",
+                      "tags": ["Micro"],
+                      "importance": "normal",
+                      "description": "Describe the structure and medical importance of Bacterial Spores."
+                    },
+                    {
+                      "id": "micro_q3",
+                      "title": "Widal Test",
+                      "type": "short",
+                      "tags": ["Micro", "Jan 22"],
+                      "importance": "high",
+                      "description": "Write a short note on the principle and interpretation of the Widal Test."
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
