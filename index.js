@@ -130,8 +130,11 @@ app.post('/api/v1/seed/topics', async (req, res) => {
 app.get('/api/v1/sync/topics', async (req, res) => {
     try {
         const subject = req.query.subject; // e.g., ?subject=Pathology
+        const chapter = req.query.chapter;
 
-        const query = subject ? { subject } : {};
+        const query = {};
+        if (subject) query.subject = subject;
+        if (chapter) query.chapter = chapter;
         const topics = await Topic.find(query).sort({ frequency_count: -1 }).lean();
 
         // Optimize: Fetch all questions in a single query instead of N queries
@@ -165,6 +168,8 @@ app.get('/api/v1/sync/topics', async (req, res) => {
             topic_name: t.topic_name,
             display_title: t.display_title,
             subject: t.subject,
+            paper: t.paper,
+            chapter: t.chapter,
             frequency_count: t.frequency_count,
             study_checklist: t.study_checklist,
             high_yield_angles: t.high_yield_angles,

@@ -58,6 +58,8 @@ async function seed() {
                 topic_name: t.topic_name,
                 display_title: t.display_title || t.topic_name,
                 subject: t.subject,
+                paper: t.paper || 'Unknown',
+                chapter: t.chapter || 'General',
                 frequency_count: t.frequency_count || 0,
                 study_checklist: t.study_checklist || [],
                 high_yield_angles: t.high_yield_angles || [],
