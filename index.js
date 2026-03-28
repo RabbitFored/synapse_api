@@ -134,34 +134,43 @@ app.get('/api/v1/sync/topics', async (req, res) => {
         const query = subject ? { subject } : {};
         const topics = await Topic.find(query).sort({ frequency_count: -1 }).lean();
 
-        // For each topic, attach its questions
-        const result = [];
-        for (const t of topics) {
-            const questions = await Question.find({ topic_id: t._id })
-                .sort({ year: -1 })
-                .lean();
+        // Optimize: Fetch all questions in a single query instead of N queries
+        const topicIds = topics.map(t => t._id);
+        const allQuestions = await Question.find({ topic_id: { $in: topicIds } })
+            .sort({ year: -1 })
+            .lean();
 
-            result.push({
-                _id: t._id,
-                topic_name: t.topic_name,
-                display_title: t.display_title,
-                subject: t.subject,
-                frequency_count: t.frequency_count,
-                study_checklist: t.study_checklist,
-                high_yield_angles: t.high_yield_angles,
-                year_frequency: t.year_frequency,
-                questions: questions.map(q => ({
-                    _id: q._id,
-                    text: q.text,
-                    year: q.year,
-                    month: q.month,
-                    paper: q.paper,
-                    paper_title: q.paper_title,
-                    section: q.section,
-                    marks: q.marks,
-                })),
+        // Group questions by topicId in memory
+        const questionsByTopic = {};
+        for (const q of allQuestions) {
+            const tIdStr = q.topic_id.toString();
+            if (!questionsByTopic[tIdStr]) {
+                questionsByTopic[tIdStr] = [];
+            }
+            questionsByTopic[tIdStr].push({
+                _id: q._id,
+                text: q.text,
+                year: q.year,
+                month: q.month,
+                paper: q.paper,
+                paper_title: q.paper_title,
+                section: q.section,
+                marks: q.marks,
             });
         }
+
+        // Attach grouped questions to their respective topics
+        const result = topics.map(t => ({
+            _id: t._id,
+            topic_name: t.topic_name,
+            display_title: t.display_title,
+            subject: t.subject,
+            frequency_count: t.frequency_count,
+            study_checklist: t.study_checklist,
+            high_yield_angles: t.high_yield_angles,
+            year_frequency: t.year_frequency,
+            questions: questionsByTopic[t._id.toString()] || [],
+        }));
 
         res.json({
             subject: subject || 'all',
