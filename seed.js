@@ -3,75 +3,87 @@ const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 
-// Reconstruct the Schema so we don't depend on express app starting
+// --- Schemas (must match index.js) ---
+const topicSchema = new mongoose.Schema({
+    topic_name: { type: String, required: true },
+    display_title: String,
+    subject: { type: String, required: true, index: true },
+    frequency_count: { type: Number, default: 0 },
+    study_checklist: [String],
+    high_yield_angles: [String],
+    year_frequency: mongoose.Schema.Types.Mixed,
+}, { timestamps: true });
+const Topic = mongoose.model('Topic', topicSchema);
+
 const questionSchema = new mongoose.Schema({
-    yearId: String,
-    yearName: String,
-    subjectId: String,
-    subjectName: String,
-    paperId: String,
-    paperName: String,
-    chapterId: String,
-    chapterName: String,
-    title: String,
-    type: String,
-    tags: [String],
-    importance: String,
-    description: String
-});
+    topic_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Topic', required: true, index: true },
+    text: { type: String, required: true },
+    year: Number,
+    month: String,
+    paper: String,
+    paper_title: String,
+    section: String,
+    marks: { type: Number, default: 0 },
+    subject: String,
+}, { timestamps: true });
 const Question = mongoose.model('Question', questionSchema);
 
 async function seed() {
     try {
         console.log('🔄 Connecting to MongoDB...');
-        await mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
-        console.log('✅ Connected securely.');
+        await mongoose.connect(process.env.MONGODB_URI);
+        console.log('✅ Connected.');
 
-        const filePath = path.join(__dirname, 'data', 'all_questions.json');
+        const filePath = path.join(__dirname, 'data', 'clustered_topics.json');
+        if (!fs.existsSync(filePath)) {
+            console.error('❌ clustered_topics.json not found in data/');
+            process.exit(1);
+        }
+
         const raw = fs.readFileSync(filePath, 'utf8');
-        const data = JSON.parse(raw);
-        
-        console.log('🧹 Clearing existing database...');
-        await Question.deleteMany({});
+        const topics = JSON.parse(raw);
+        const subject = topics[0]?.subject || 'Pathology';
 
-        const flatQuestions = [];
-        
-        const years = data.years || [];
-        for (const year of years) {
-            const subjects = year.subjects || [];
-            for (const sub of subjects) {
-                const papers = sub.papers || [];
-                const processChapters = (chaps, paperId = null, paperName = null) => {
-                    for (const chap of chaps) {
-                        const qs = chap.questions || [];
-                        for (const q of qs) {
-                            flatQuestions.push({
-                                yearId: year.id, yearName: year.name,
-                                subjectId: sub.id, subjectName: sub.name,
-                                paperId: paperId, paperName: paperName,
-                                chapterId: chap.id, chapterName: chap.name,
-                                title: q.title, type: q.type,
-                                tags: q.tags, importance: q.importance,
-                                description: q.description
-                            });
-                        }
-                    }
-                };
+        console.log(`🗑️  Clearing existing ${subject} data...`);
+        const existingTopics = await Topic.find({ subject });
+        const topicIds = existingTopics.map(t => t._id);
+        await Question.deleteMany({ topic_id: { $in: topicIds } });
+        await Topic.deleteMany({ subject });
 
-                if (papers.length > 0) {
-                    for (const paper of papers) {
-                        processChapters(paper.chapters || [], paper.id, paper.name);
-                    }
-                } else {
-                    processChapters(sub.chapters || []);
-                }
+        let topicsInserted = 0;
+        let questionsInserted = 0;
+
+        for (const t of topics) {
+            const topicDoc = await Topic.create({
+                topic_name: t.topic_name,
+                display_title: t.display_title || t.topic_name,
+                subject: t.subject,
+                frequency_count: t.frequency_count || 0,
+                study_checklist: t.study_checklist || [],
+                high_yield_angles: t.high_yield_angles || [],
+                year_frequency: t.year_frequency || {},
+            });
+            topicsInserted++;
+
+            const questions = (t.questions || []).map(q => ({
+                topic_id: topicDoc._id,
+                text: q.text,
+                year: q.year,
+                month: q.month,
+                paper: q.paper,
+                paper_title: q.paper_title,
+                section: q.section,
+                marks: q.marks || 0,
+                subject: t.subject,
+            }));
+
+            if (questions.length > 0) {
+                await Question.insertMany(questions);
+                questionsInserted += questions.length;
             }
         }
 
-        console.log(`📦 Pushing ${flatQuestions.length} medical questions to Atlas...`);
-        await Question.insertMany(flatQuestions);
-        
-        console.log('🎉 Database seeding complete!');
+        console.log(`🎉 Seeded ${topicsInserted} topics and ${questionsInserted} questions for ${subject}!`);
         process.exit(0);
     } catch (err) {
         console.error('❌ SEED ERROR:', err.message);
