@@ -30,13 +30,19 @@ const topicSchema = new mongoose.Schema({
     topic_name: { type: String, required: true },
     display_title: String,
     subject: { type: String, required: true, index: true },
+    chapter: { type: String, default: 'General' },
+    paper: String,                                    // display name
+    paper_id: { type: String, default: 'paper_1' },   // machine key
+    is_high_yield: { type: Boolean, default: false },  // freq >= 3
     frequency_count: { type: Number, default: 0 },
     study_checklist: [String],
     high_yield_angles: [String],
-    year_frequency: mongoose.Schema.Types.Mixed, // { "2008": 1, "2009": 2 }
+    year_frequency: mongoose.Schema.Types.Mixed, // { "2016": 1, "2017": 2 }
 }, { timestamps: true });
 
 topicSchema.index({ subject: 1, frequency_count: -1 });
+topicSchema.index({ subject: 1, paper_id: 1, chapter: 1 });
+topicSchema.index({ subject: 1, is_high_yield: 1 });
 const Topic = mongoose.model('Topic', topicSchema);
 
 // --- Questions Collection ---
@@ -86,6 +92,10 @@ app.post('/api/v1/seed/topics', async (req, res) => {
                 topic_name: t.topic_name,
                 display_title: t.display_title || t.topic_name,
                 subject: t.subject,
+                chapter: t.chapter || 'General',
+                paper: t.paper || 'Unknown',
+                paper_id: t.paper_id || 'paper_1',
+                is_high_yield: t.is_high_yield || (t.frequency_count >= 3),
                 frequency_count: t.frequency_count || 0,
                 study_checklist: t.study_checklist || [],
                 high_yield_angles: t.high_yield_angles || [],
@@ -131,10 +141,14 @@ app.get('/api/v1/sync/topics', async (req, res) => {
     try {
         const subject = req.query.subject; // e.g., ?subject=Pathology
         const chapter = req.query.chapter;
+        const paper_id = req.query.paper_id; // e.g., ?paper_id=paper_1
+        const high_yield = req.query.high_yield; // e.g., ?high_yield=true
 
         const query = {};
         if (subject) query.subject = subject;
         if (chapter) query.chapter = chapter;
+        if (paper_id) query.paper_id = paper_id;
+        if (high_yield === 'true') query.is_high_yield = true;
         const topics = await Topic.find(query).sort({ frequency_count: -1 }).lean();
 
         // Optimize: Fetch all questions in a single query instead of N queries
@@ -168,8 +182,10 @@ app.get('/api/v1/sync/topics', async (req, res) => {
             topic_name: t.topic_name,
             display_title: t.display_title,
             subject: t.subject,
-            paper: t.paper,
-            chapter: t.chapter,
+            chapter: t.chapter || 'General',
+            paper: t.paper || 'Unknown',
+            paper_id: t.paper_id || 'paper_1',
+            is_high_yield: t.is_high_yield || false,
             frequency_count: t.frequency_count,
             study_checklist: t.study_checklist,
             high_yield_angles: t.high_yield_angles,
@@ -196,24 +212,28 @@ app.get('/api/v1/sync/topics', async (req, res) => {
 // so the existing Flutter app still works until fully migrated
 app.get('/api/v1/sync/all_questions', async (req, res) => {
     try {
+        // Fetch all topics + all questions in 2 queries (no N+1)
         const topics = await Topic.find().sort({ frequency_count: -1 }).lean();
+        const topicIds = topics.map(t => t._id);
+        const allQuestions = await Question.find({ topic_id: { $in: topicIds } })
+            .sort({ year: -1 }).lean();
 
-        // Group topics by subject
+        // Group questions by topic_id
+        const qByTopic = {};
+        for (const q of allQuestions) {
+            const tid = q.topic_id.toString();
+            if (!qByTopic[tid]) qByTopic[tid] = [];
+            qByTopic[tid].push(q);
+        }
+
+        // Group topics by subject + paper_id (pre-computed, no guessing)
         const subjectMap = {};
         for (const t of topics) {
             if (!subjectMap[t.subject]) {
-                subjectMap[t.subject] = { p1: [], p2: [] };
+                subjectMap[t.subject] = { paper_1: [], paper_2: [] };
             }
 
-            const questions = await Question.find({ topic_id: t._id }).sort({ year: -1 }).lean();
-
-            // Determine which paper this topic mostly belongs to
-            let p1Count = 0, p2Count = 0;
-            questions.forEach(q => {
-                if (q.paper === 'p1') p1Count++;
-                else p2Count++;
-            });
-
+            const questions = qByTopic[t._id.toString()] || [];
             const chapter = {
                 id: t._id.toString(),
                 name: `${t.display_title || t.topic_name} [${t.frequency_count} PYQs]`,
@@ -222,38 +242,90 @@ app.get('/api/v1/sync/all_questions', async (req, res) => {
                     title: q.text.length > 40 ? q.text.substring(0, 40) + '...' : q.text,
                     type: q.marks >= 10 ? 'long' : 'short',
                     tags: [String(q.year)],
-                    importance: t.frequency_count >= 3 ? 'high' : 'normal',
+                    importance: t.is_high_yield ? 'high' : 'normal',
                     description: q.text,
                 })),
             };
 
-            if (p1Count >= p2Count) {
-                subjectMap[t.subject].p1.push(chapter);
+            // Use pre-computed paper_id instead of counting p1/p2
+            const paperId = t.paper_id || 'paper_1';
+            if (paperId === 'paper_2') {
+                subjectMap[t.subject].paper_2.push(chapter);
             } else {
-                subjectMap[t.subject].p2.push(chapter);
+                subjectMap[t.subject].paper_1.push(chapter);
             }
         }
 
-        // Build legacy tree
-        const subjects = Object.entries(subjectMap).map(([name, papers]) => ({
-            id: name.toLowerCase().replace(/\s+/g, '_'),
-            name: name.toUpperCase(),
-            papers: [
-                { id: 'paper_1', name: 'Paper 1', chapters: papers.p1 },
-                { id: 'paper_2', name: 'Paper 2', chapters: papers.p2 },
-            ],
-        }));
+        // Determine year group per subject
+        const yr1Subjects = ['Anatomy', 'Physiology', 'Biochemistry'];
+        const yearGroups = { year_1: [], year_2: [] };
 
-        res.json({
-            years: [{
-                id: 'year_2',
-                name: '2nd Year MBBS',
-                subjects,
-            }],
-        });
+        for (const [name, papers] of Object.entries(subjectMap)) {
+            const subjectEntry = {
+                id: name.toLowerCase().replace(/\s+/g, '_'),
+                name: name.toUpperCase(),
+                papers: [
+                    { id: 'paper_1', name: 'Paper 1', chapters: papers.paper_1 },
+                    { id: 'paper_2', name: 'Paper 2', chapters: papers.paper_2 },
+                ],
+            };
+            if (yr1Subjects.includes(name)) {
+                yearGroups.year_1.push(subjectEntry);
+            } else {
+                yearGroups.year_2.push(subjectEntry);
+            }
+        }
+
+        const years = [];
+        if (yearGroups.year_1.length > 0) {
+            years.push({ id: 'year_1', name: '1st Year MBBS', subjects: yearGroups.year_1 });
+        }
+        if (yearGroups.year_2.length > 0) {
+            years.push({ id: 'year_2', name: '2nd Year MBBS', subjects: yearGroups.year_2 });
+        }
+
+        res.json({ years });
     } catch (error) {
         console.error('Legacy Sync Error:', error);
         res.status(500).json({ error: 'Server Error building tree' });
+    }
+});
+
+// ==========================================
+// 📋 5b. CHAPTERS ENDPOINT — Aggregated chapter list
+// ==========================================
+app.get('/api/v1/chapters', async (req, res) => {
+    try {
+        const { subject, paper_id } = req.query;
+        const match = {};
+        if (subject) match.subject = subject;
+        if (paper_id) match.paper_id = paper_id;
+
+        const chapters = await Topic.aggregate([
+            { $match: match },
+            { $group: {
+                _id: '$chapter',
+                topic_count: { $sum: 1 },
+                question_count: { $sum: '$frequency_count' },
+                high_yield_count: { $sum: { $cond: ['$is_high_yield', 1, 0] } },
+            }},
+            { $sort: { _id: 1 } },
+        ]);
+
+        res.json({
+            subject: subject || 'all',
+            paper_id: paper_id || 'all',
+            total_chapters: chapters.length,
+            chapters: chapters.map(c => ({
+                name: c._id,
+                topic_count: c.topic_count,
+                question_count: c.question_count,
+                high_yield_count: c.high_yield_count,
+            })),
+        });
+    } catch (error) {
+        console.error('Chapters Error:', error);
+        res.status(500).json({ error: 'Server error fetching chapters' });
     }
 });
 
