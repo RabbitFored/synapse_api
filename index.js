@@ -48,6 +48,7 @@ const Topic = mongoose.model('Topic', topicSchema);
 // --- Questions Collection ---
 const questionSchema = new mongoose.Schema({
     topic_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Topic', required: true, index: true },
+    question_id: { type: String, index: true },
     text: { type: String, required: true },
     year: Number,
     month: String,
@@ -63,75 +64,10 @@ questionSchema.index({ subject: 1, year: -1 });
 const Question = mongoose.model('Question', questionSchema);
 
 // ==========================================
-// 🌱 3. SEED ENDPOINT (From clustered_topics.json)
+// 🗑️ (Legacy Seed Endpoint Removed)
+// Seeding is now handled completely by synapse_seed upserts
 // ==========================================
-app.post('/api/v1/seed/topics', async (req, res) => {
-    try {
-        const filePath = path.join(__dirname, 'data', 'clustered_topics.json');
-        if (!fs.existsSync(filePath)) {
-            return res.status(404).json({ error: "clustered_topics.json not found in data folder" });
-        }
 
-        const raw = fs.readFileSync(filePath, 'utf8');
-        const topics = JSON.parse(raw);
-        const subject = topics[0]?.subject || 'Pathology';
-
-        // Clear existing data for this subject
-        console.log(`🗑️  Clearing existing ${subject} data...`);
-        const existingTopics = await Topic.find({ subject });
-        const topicIds = existingTopics.map(t => t._id);
-        await Question.deleteMany({ topic_id: { $in: topicIds } });
-        await Topic.deleteMany({ subject });
-
-        let topicsInserted = 0;
-        let questionsInserted = 0;
-
-        for (const t of topics) {
-            // Insert topic
-            const topicDoc = await Topic.create({
-                topic_name: t.topic_name,
-                display_title: t.display_title || t.topic_name,
-                subject: t.subject,
-                chapter: t.chapter || 'General',
-                paper: t.paper || 'Unknown',
-                paper_id: t.paper_id || 'paper_1',
-                is_high_yield: t.is_high_yield || (t.frequency_count >= 3),
-                frequency_count: t.frequency_count || 0,
-                study_checklist: t.study_checklist || [],
-                high_yield_angles: t.high_yield_angles || [],
-                year_frequency: t.year_frequency || {},
-            });
-            topicsInserted++;
-
-            // Insert questions linked to this topic
-            const questions = (t.questions || []).map(q => ({
-                topic_id: topicDoc._id,
-                text: q.text,
-                year: q.year,
-                month: q.month,
-                paper: q.paper,
-                paper_title: q.paper_title,
-                section: q.section,
-                marks: q.marks || 0,
-                subject: t.subject,
-            }));
-
-            if (questions.length > 0) {
-                await Question.insertMany(questions);
-                questionsInserted += questions.length;
-            }
-        }
-
-        res.json({
-            message: `✅ Seeded ${topicsInserted} topics and ${questionsInserted} questions for ${subject}`,
-            topics: topicsInserted,
-            questions: questionsInserted,
-        });
-    } catch (error) {
-        console.error('Seed Error:', error);
-        res.status(500).json({ error: "Server error during seeding" });
-    }
-});
 
 // ==========================================
 // 🚀 4. SYNC ENDPOINT — Plexus-Style Topics
@@ -187,6 +123,7 @@ app.get('/api/v1/sync/topics', async (req, res) => {
             paper_id: t.paper_id || 'paper_1',
             is_high_yield: t.is_high_yield || false,
             frequency_count: t.frequency_count,
+            is_high_yield: t.is_high_yield,
             study_checklist: t.study_checklist,
             high_yield_angles: t.high_yield_angles,
             year_frequency: t.year_frequency,
