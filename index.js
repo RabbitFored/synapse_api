@@ -2,24 +2,36 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const apicache = require('apicache');
+const cache = apicache.middleware;
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
 app.use(cors());
+app.use(compression());
 app.use(express.json());
 
 // ==========================================
 // 🔗 1. MONGODB CONNECTION
 // ==========================================
-mongoose.connect(process.env.MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-}).then(() => console.log('✅ Connected to MongoDB Atlas'))
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('✅ Connected to MongoDB Atlas'))
   .catch(err => {
       console.error('❌ MongoDB Connection Error:', err);
       process.exit(1);
   });
+
+// ==========================================
+// 🛡️ SECURITY & RATE LIMITS
+// ==========================================
+const syncLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 5, // 5 requests per minute per IP for heavy sync ops
+    message: { error: 'Too many sync requests from this IP, please try again next minute' }
+});
 
 // ==========================================
 // 🧱 2. MONGOOSE SCHEMAS (New Topic-Based)
@@ -57,6 +69,8 @@ const questionSchema = new mongoose.Schema({
     section: String,
     marks: { type: Number, default: 0 },
     subject: String,
+    options: mongoose.Schema.Types.Mixed,
+    qp_code: String,
 }, { timestamps: true });
 
 questionSchema.index({ topic_id: 1 });
@@ -73,12 +87,13 @@ const Question = mongoose.model('Question', questionSchema);
 // 🚀 4. SYNC ENDPOINT — Plexus-Style Topics
 // ==========================================
 // This is what the Flutter app calls to get all topics for a subject
-app.get('/api/v1/sync/topics', async (req, res) => {
+app.get('/api/v1/sync/topics', syncLimiter, cache('5 minutes'), async (req, res) => {
     try {
-        const subject = req.query.subject; // e.g., ?subject=Pathology
-        const chapter = req.query.chapter;
-        const paper_id = req.query.paper_id; // e.g., ?paper_id=paper_1
-        const high_yield = req.query.high_yield; // e.g., ?high_yield=true
+        // Sanitize to string to prevent NoSQL object injection ($ne, $gt, etc)
+        const subject = req.query.subject ? String(req.query.subject) : undefined;
+        const chapter = req.query.chapter ? String(req.query.chapter) : undefined;
+        const paper_id = req.query.paper_id ? String(req.query.paper_id) : undefined;
+        const high_yield = req.query.high_yield ? String(req.query.high_yield) : undefined;
 
         const query = {};
         if (subject) query.subject = subject;
@@ -109,6 +124,9 @@ app.get('/api/v1/sync/topics', async (req, res) => {
                 paper_title: q.paper_title,
                 section: q.section,
                 marks: q.marks,
+                options: q.options,
+                qp_code: q.qp_code,
+                question_id: q.question_id,
             });
         }
 
@@ -121,7 +139,6 @@ app.get('/api/v1/sync/topics', async (req, res) => {
             chapter: t.chapter || 'General',
             paper: t.paper || 'Unknown',
             paper_id: t.paper_id || 'paper_1',
-            is_high_yield: t.is_high_yield || false,
             frequency_count: t.frequency_count,
             is_high_yield: t.is_high_yield,
             study_checklist: t.study_checklist,
@@ -147,7 +164,7 @@ app.get('/api/v1/sync/topics', async (req, res) => {
 // ==========================================
 // Maps new topic data back to the old years->subjects->chapters format
 // so the existing Flutter app still works until fully migrated
-app.get('/api/v1/sync/all_questions', async (req, res) => {
+app.get('/api/v1/sync/all_questions', syncLimiter, cache('60 minutes'), async (req, res) => {
     try {
         // Fetch all topics + all questions in 2 queries (no N+1)
         const topics = await Topic.find().sort({ frequency_count: -1 }).lean();
@@ -175,12 +192,13 @@ app.get('/api/v1/sync/all_questions', async (req, res) => {
                 id: t._id.toString(),
                 name: `${t.display_title || t.topic_name} [${t.frequency_count} PYQs]`,
                 questions: questions.map(q => ({
-                    id: q._id.toString(),
+                    id: q.question_id || q._id.toString(),
                     title: q.text.length > 40 ? q.text.substring(0, 40) + '...' : q.text,
-                    type: q.marks >= 10 ? 'long' : 'short',
+                    type: q.marks >= 10 ? 'long' : (q.section === 'MCQ' ? 'mcq' : 'short'),
                     tags: [String(q.year)],
                     importance: t.is_high_yield ? 'high' : 'normal',
                     description: q.text,
+                    options: q.options,
                 })),
             };
 
@@ -193,32 +211,48 @@ app.get('/api/v1/sync/all_questions', async (req, res) => {
             }
         }
 
-        // Determine year group per subject
-        const yr1Subjects = ['Anatomy', 'Physiology', 'Biochemistry'];
-        const yearGroups = { year_1: [], year_2: [] };
+        // Determine phase group per subject
+        const phaseGroupings = {
+            'phase_1': { name: 'Phase 1', subjects: ['anatomy', 'physiology', 'biochemistry'], data: [] },
+            'phase_2': { name: 'Phase 2', subjects: ['pathology', 'pharmacology', 'microbiology'], data: [] },
+            'phase_3_part_1': { name: 'Phase 3 Part 1', subjects: ['community_medicine', 'opthalmology', 'otorhinolaryngology', 'forensic_medicine'], data: [] },
+            'phase_3_part_2': { name: 'Phase 3 Part 2', subjects: ['general_medicine', 'general_surgery', 'obstetrics_and_gynaecology', 'pediatrics', 'orthopaedics'], data: [] }
+        };
 
         for (const [name, papers] of Object.entries(subjectMap)) {
+            const subjectId = name.toLowerCase().replace(/\s+/g, '_');
             const subjectEntry = {
-                id: name.toLowerCase().replace(/\s+/g, '_'),
+                id: subjectId,
                 name: name.toUpperCase(),
                 papers: [
                     { id: 'paper_1', name: 'Paper 1', chapters: papers.paper_1 },
                     { id: 'paper_2', name: 'Paper 2', chapters: papers.paper_2 },
                 ],
             };
-            if (yr1Subjects.includes(name)) {
-                yearGroups.year_1.push(subjectEntry);
-            } else {
-                yearGroups.year_2.push(subjectEntry);
+            
+            // Route to correct phase group
+            let matched = false;
+            for (const [phaseKey, phaseObj] of Object.entries(phaseGroupings)) {
+                if (phaseObj.subjects.includes(subjectId)) {
+                    phaseObj.data.push(subjectEntry);
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) {
+                // Fallback for unmapped subjects
+                if (!phaseGroupings['others']) {
+                    phaseGroupings['others'] = { name: 'Other Subjects', subjects: [], data: [] };
+                }
+                phaseGroupings['others'].data.push(subjectEntry);
             }
         }
 
         const years = [];
-        if (yearGroups.year_1.length > 0) {
-            years.push({ id: 'year_1', name: '1st Year MBBS', subjects: yearGroups.year_1 });
-        }
-        if (yearGroups.year_2.length > 0) {
-            years.push({ id: 'year_2', name: '2nd Year MBBS', subjects: yearGroups.year_2 });
+        for (const [phaseKey, phaseObj] of Object.entries(phaseGroupings)) {
+            if (phaseObj.data.length > 0) {
+                years.push({ id: phaseKey, name: phaseObj.name, subjects: phaseObj.data });
+            }
         }
 
         res.json({ years });
@@ -231,9 +265,11 @@ app.get('/api/v1/sync/all_questions', async (req, res) => {
 // ==========================================
 // 📋 5b. CHAPTERS ENDPOINT — Aggregated chapter list
 // ==========================================
-app.get('/api/v1/chapters', async (req, res) => {
+app.get('/api/v1/chapters', cache('5 minutes'), async (req, res) => {
     try {
-        const { subject, paper_id } = req.query;
+        const subject = req.query.subject ? String(req.query.subject) : undefined;
+        const paper_id = req.query.paper_id ? String(req.query.paper_id) : undefined;
+        
         const match = {};
         if (subject) match.subject = subject;
         if (paper_id) match.paper_id = paper_id;
@@ -269,7 +305,7 @@ app.get('/api/v1/chapters', async (req, res) => {
 // ==========================================
 // 📊 6. STATS ENDPOINT
 // ==========================================
-app.get('/api/v1/stats', async (req, res) => {
+app.get('/api/v1/stats', cache('10 minutes'), async (req, res) => {
     try {
         const topicCount = await Topic.countDocuments();
         const questionCount = await Question.countDocuments();
