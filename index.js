@@ -49,6 +49,8 @@ const topicSchema = new mongoose.Schema({
     chapter: { type: String, default: 'General' },
     paper: String,                                    // display name
     paper_id: { type: String, default: 'paper_1' },   // machine key
+    ai_verified: { type: Boolean, default: true },
+    confidence_score: { type: Number, default: 100 },
     is_high_yield: { type: Boolean, default: false },  // freq >= 3
     frequency_count: { type: Number, default: 0 },
     study_checklist: [String],
@@ -59,6 +61,7 @@ const topicSchema = new mongoose.Schema({
 topicSchema.index({ subject: 1, frequency_count: -1 });
 topicSchema.index({ subject: 1, paper_id: 1, chapter: 1 });
 topicSchema.index({ subject: 1, is_high_yield: 1 });
+topicSchema.index({ ai_verified: 1 });
 const Topic = mongoose.model('Topic', topicSchema);
 
 // --- Questions Collection ---
@@ -338,7 +341,52 @@ app.get('/api/v1/stats', cache('10 minutes'), async (req, res) => {
 });
 
 // ==========================================
-// 🏥 7. HEALTH CHECK
+// 🛡️ 7. ADMIN HITL ENDPOINTS
+// ==========================================
+
+// GET /api/v1/admin/unverified_topics
+app.get('/api/v1/admin/unverified_topics', async (req, res) => {
+    try {
+        const university = req.query.university ? String(req.query.university) : undefined;
+        let query = { ai_verified: false };
+        if (university) query.university = university;
+
+        // Sort by confidence score ascending (lowest confidence first)
+        const topics = await Topic.find(query).sort({ confidence_score: 1, subject: 1 });
+        res.json({ success: true, count: topics.length, data: topics });
+    } catch (err) {
+        console.error('Error fetching unverified topics:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// POST /api/v1/admin/verify_topic
+app.post('/api/v1/admin/verify_topic', async (req, res) => {
+    try {
+        const { topic_id, new_chapter, is_approved } = req.body;
+        if (!topic_id) {
+            return res.status(400).json({ error: 'topic_id required' });
+        }
+        const topic = await Topic.findById(topic_id);
+        if (!topic) {
+            return res.status(404).json({ error: 'Topic not found' });
+        }
+        
+        if (new_chapter) {
+            topic.chapter = new_chapter;
+        }
+        topic.ai_verified = true;
+        await topic.save();
+
+        res.json({ success: true, message: 'Topic verified successfully' });
+    } catch (err) {
+        console.error('Error verifying topic:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// ==========================================
+// 🏥 8. HEALTH CHECK
 // ==========================================
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', uptime: process.uptime() });
