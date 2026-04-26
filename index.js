@@ -208,9 +208,10 @@ app.get('/api/v1/sync/all_questions', syncLimiter, cache('60 minutes'), async (r
                 })),
             };
 
-            // Use pre-computed paper_id instead of counting p1/p2
-            const paperId = t.paper_id || 'paper_1';
-            if (paperId === 'paper_2') {
+            // Use pre-computed paper_id — normalize p1/p2 ↔ paper_1/paper_2
+            const rawPaperId = (t.paper_id || 'paper_1').toLowerCase().replace(/[\s_-]/g, '');
+            const isPaper2 = rawPaperId === 'p2' || rawPaperId === 'paper2' || rawPaperId === 'paperii';
+            if (isPaper2) {
                 subjectMap[t.subject].paper_2.push(chapter);
             } else {
                 subjectMap[t.subject].paper_1.push(chapter);
