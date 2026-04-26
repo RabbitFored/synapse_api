@@ -27,6 +27,9 @@ mongoose.connect(process.env.MONGODB_URI)
 // ==========================================
 // 🛡️ SECURITY & RATE LIMITS
 // ==========================================
+// Trust the reverse proxy (CapRover/nginx) so express-rate-limit
+// reads the real client IP from X-Forwarded-For instead of crashing.
+app.set('trust proxy', 1);
 const syncLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
     max: 5, // 5 requests per minute per IP for heavy sync ops
