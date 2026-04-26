@@ -42,6 +42,7 @@ const topicSchema = new mongoose.Schema({
     topic_name: { type: String, required: true },
     display_title: String,
     subject: { type: String, required: true, index: true },
+    university: { type: String, index: true },         // e.g. 'TNMGRMU', 'RGUHS'
     chapter: { type: String, default: 'General' },
     paper: String,                                    // display name
     paper_id: { type: String, default: 'paper_1' },   // machine key
@@ -69,6 +70,7 @@ const questionSchema = new mongoose.Schema({
     section: String,
     marks: { type: Number, default: 0 },
     subject: String,
+    university: String,                                // e.g. 'TNMGRMU', 'RGUHS'
     options: mongoose.Schema.Types.Mixed,
     qp_code: String,
 }, { timestamps: true });
@@ -91,12 +93,14 @@ app.get('/api/v1/sync/topics', syncLimiter, cache('5 minutes'), async (req, res)
     try {
         // Sanitize to string to prevent NoSQL object injection ($ne, $gt, etc)
         const subject = req.query.subject ? String(req.query.subject) : undefined;
+        const university = req.query.university ? String(req.query.university) : undefined;
         const chapter = req.query.chapter ? String(req.query.chapter) : undefined;
         const paper_id = req.query.paper_id ? String(req.query.paper_id) : undefined;
         const high_yield = req.query.high_yield ? String(req.query.high_yield) : undefined;
 
         const query = {};
         if (subject) query.subject = subject;
+        if (university) query.university = university;
         if (chapter) query.chapter = chapter;
         if (paper_id) query.paper_id = paper_id;
         if (high_yield === 'true') query.is_high_yield = true;
@@ -166,8 +170,10 @@ app.get('/api/v1/sync/topics', syncLimiter, cache('5 minutes'), async (req, res)
 // so the existing Flutter app still works until fully migrated
 app.get('/api/v1/sync/all_questions', syncLimiter, cache('60 minutes'), async (req, res) => {
     try {
+        const university = req.query.university ? String(req.query.university) : undefined;
+        const legacyQuery = university ? { university } : {};
         // Fetch all topics + all questions in 2 queries (no N+1)
-        const topics = await Topic.find().sort({ frequency_count: -1 }).lean();
+        const topics = await Topic.find(legacyQuery).sort({ frequency_count: -1 }).lean();
         const topicIds = topics.map(t => t._id);
         const allQuestions = await Question.find({ topic_id: { $in: topicIds } })
             .sort({ year: -1 }).lean();
@@ -268,10 +274,12 @@ app.get('/api/v1/sync/all_questions', syncLimiter, cache('60 minutes'), async (r
 app.get('/api/v1/chapters', cache('5 minutes'), async (req, res) => {
     try {
         const subject = req.query.subject ? String(req.query.subject) : undefined;
+        const university = req.query.university ? String(req.query.university) : undefined;
         const paper_id = req.query.paper_id ? String(req.query.paper_id) : undefined;
         
         const match = {};
         if (subject) match.subject = subject;
+        if (university) match.university = university;
         if (paper_id) match.paper_id = paper_id;
 
         const chapters = await Topic.aggregate([
